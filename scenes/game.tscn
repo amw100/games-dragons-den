@@ -1,0 +1,14 @@
+[gd_scene format=3 uid="uid://b64yw38xiulat"]
+
+[ext_resource type="PackedScene" uid="uid://ddledlvrayd62" path="res://scenes/player.tscn" id="1_uwrxv"]
+[ext_resource type="Script" uid="uid://dfwxo1slylsf3" path="res://scripts/game.gd" id="2_game"]
+
+[node name="Game" type="Node2D" unique_id=508191205]
+script = ExtResource("2_game")
+
+[node name="Player" parent="." unique_id=1466336390 instance=ExtResource("1_uwrxv")]
+position = Vector2(200, 288)
+
+[node name="Camera2D" type="Camera2D" parent="Player" unique_id=946852508]
+limit_top = -36
+limit_bottom = 612
