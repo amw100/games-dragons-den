@@ -1,17 +1,17 @@
+class_name Player
 extends CharacterBody2D
 
-const SPEED      =  200.0
-const FLAP_FORCE = -450.0
-const DEATH_TIME_SEC = 2.0 
+const SPEED          =  200.0
+const FLAP_FORCE     = -450.0
+const DEATH_TIME_SEC =    2.0
 
 var _dead        := false
 var _can_restart := false
 
-@onready var _sprite := $AnimatedSprite2D
+@onready var _sprite : AnimatedSprite2D = $AnimatedSprite2D
 
 
 func _ready() -> void:
-	add_to_group("player")
 	_sprite.stop()
 	_sprite.frame = 2
 
@@ -35,8 +35,8 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 
-func _input(_event: InputEvent) -> void:
-	if _can_restart:
+func _input(event: InputEvent) -> void:
+	if _can_restart and event.is_pressed() and not event.is_echo():
 		get_tree().reload_current_scene()
 
 

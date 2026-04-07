@@ -1,3 +1,4 @@
+class_name Game
 extends Node2D
 
 ## World layout — both values are in world-pixels.
@@ -10,24 +11,56 @@ const TILE_W := 48
 const TILE_H := 48
 const GAP    := 2
 
-## Tile pool — enough columns to fill the viewport plus a buffer on each side.
-## Viewport = 1152px → 24 tiles visible; 30 gives 3 tiles of buffer per side.
-const POOL_COLS := 30
-const START_X   := -700.0   # x-centre of first pool column at startup
+## Viewport width (must match project.godot display settings). Used to
+## derive both the tile pool size and the camera look-ahead distance so that
+## changing the viewport only requires updating this one constant.
+const VIEWPORT_W := 1152
+
+## Tile pool: enough columns to fill the viewport plus 2 tiles of buffer on
+## each side. Derived from VIEWPORT_W/TILE_W so it scales with the window.
+const POOL_COLS := 28   # ceil(1152 / 48) + 4 = 28
+
+## Look-ahead for tile recycling: half the viewport plus one tile of slack.
+## A column that scrolls past this distance behind the player is recycled.
+const CAM_LEAD := VIEWPORT_W * 0.5 + TILE_W   # = 624
+
+## x-centre of the first pool column at startup. Chosen so the initial pool
+## covers the visible area on both sides of the player's spawn position.
+const START_X := -700.0
+
+## Collision world extents — wide enough that the player never reaches either
+## end during a single play session. No recycling needed.
+const WORLD_HALF_WIDTH := 100_000.0
+
+## Packed scenes
+const KillZoneScene := preload("res://scenes/kill_zone.tscn")
+
+## Pre-computed lava-strip source rects — one per animation frame.
+## Both lava_top and lava_body share the same 4-col strip layout.
+var _lava_regions : Array[Rect2] = [
+	Rect2(GAP + 0 * (TILE_W + GAP), GAP, TILE_W, TILE_H),
+	Rect2(GAP + 1 * (TILE_W + GAP), GAP, TILE_W, TILE_H),
+	Rect2(GAP + 2 * (TILE_W + GAP), GAP, TILE_W, TILE_H),
+	Rect2(GAP + 3 * (TILE_W + GAP), GAP, TILE_W, TILE_H),
+]
 
 var _lava_frame := 0
 
-# ── Ceiling pool (one edge sprite + one body sprite per column) ────────────────
+# ── Ceiling pool ──────────────────────────────────────────────────────────────
 var _ceil_edge  : Array[Sprite2D] = []
 var _ceil_body  : Array[Sprite2D] = []
 var _ceil_head  := 0       # pool index of the leftmost (oldest) column
 var _ceil_right := 0.0     # x-centre of the rightmost placed column
 
-# ── Floor pool (one lava_top + three lava_body sprites per column) ─────────────
-var _floor_top  : Array[Sprite2D] = []
-var _floor_body : Array[Sprite2D] = []   # 3 per column, index = col*3 + row
-var _floor_head := 0
+# ── Floor pool ────────────────────────────────────────────────────────────────
+# Each inner Array holds the sprites that make up one column:
+#   index 0   = lava_top
+#   index 1-3 = three lava_body rows stacked below
+var _floor_cols  : Array = []
+var _floor_head  := 0
 var _floor_right := 0.0
+
+@onready var _player : CharacterBody2D = $Player
 
 
 func _ready() -> void:
@@ -37,7 +70,7 @@ func _ready() -> void:
 
 	var timer := Timer.new()
 	timer.name       = "LavaTimer"
-	timer.wait_time  = 1.0 / 8.0
+	timer.wait_time  = 1.0 / 8.0     # 8 FPS, matches make_obstacles.py design
 	timer.autostart  = true
 	timer.timeout.connect(_advance_lava)
 	add_child(timer)
@@ -88,79 +121,80 @@ func _build_floor() -> void:
 
 	for i in POOL_COLS:
 		var x := START_X + i * TILE_W
+		var col : Array[Sprite2D] = []
 
 		var top := Sprite2D.new()
 		top.texture        = top_tex
 		top.region_enabled = true
-		top.region_rect    = _lava_region(0)
+		top.region_rect    = _lava_regions[0]
 		top.position       = Vector2(x, PLAY_BOTTOM + TILE_H * 0.5)
 		container.add_child(top)
-		_floor_top.append(top)
+		col.append(top)
 
 		for row in 3:
 			var b := Sprite2D.new()
 			b.texture        = body_tex
 			b.region_enabled = true
-			b.region_rect    = _lava_region(0)
+			b.region_rect    = _lava_regions[0]
 			b.position       = Vector2(x, PLAY_BOTTOM + TILE_H * (1.5 + row))
 			container.add_child(b)
-			_floor_body.append(b)
+			col.append(b)
+
+		_floor_cols.append(col)
 
 	_floor_right = START_X + (POOL_COLS - 1) * TILE_W
 
 
-# ── Bounds collision — one wide slab each, never need to move ──────────────────
-
-const KillZone := preload("res://scenes/kill_zone.tscn")
+# ── Bounds collision + kill zones ──────────────────────────────────────────────
 
 func _build_bounds_collision() -> void:
-	var half_w := 100_000.0
+	# Ceiling: 4-tile-tall slab centred two tiles above PLAY_TOP so its bottom
+	# edge lands on y = 0. Kill zone straddles PLAY_TOP so the player's circle
+	# actually overlaps it when the static slab stops the body at the wall.
+	_make_bounds_pair("Ceiling",
+		PLAY_TOP - TILE_H * 2.0, TILE_H * 4,   # static slab: centre_y, height
+		PLAY_TOP)                              # kill-zone centre (2-tile tall)
 
-	# Ceiling — static collision + kill zone
-	var ceil_body := StaticBody2D.new()
-	ceil_body.name = "CeilingCollision"
-	add_child(ceil_body)
-	var cc := CollisionShape2D.new()
-	var cr := RectangleShape2D.new()
-	cr.size     = Vector2(half_w * 2, TILE_H * 4)
-	cc.shape    = cr
-	cc.position = Vector2(0.0, PLAY_TOP - TILE_H * 2.0)
-	ceil_body.add_child(cc)
+	# Floor: 5-tile-tall slab (lava top + 3 body rows + padding).
+	_make_bounds_pair("Floor",
+		PLAY_BOTTOM + TILE_H * 2.5, TILE_H * 5,
+		PLAY_BOTTOM)
 
-	var ceil_kz   := KillZone.instantiate()
-	var ceil_kz_c := CollisionShape2D.new()
-	var ceil_kz_r := RectangleShape2D.new()
-	ceil_kz_r.size     = Vector2(half_w * 2, TILE_H * 2)
-	ceil_kz_c.shape    = ceil_kz_r
-	ceil_kz_c.position = Vector2(0.0, PLAY_TOP)   # extends 48px into play area
-	ceil_kz.add_child(ceil_kz_c)
-	add_child(ceil_kz)
 
-	# Floor — static collision + kill zone
-	var floor_body := StaticBody2D.new()
-	floor_body.name = "FloorCollision"
-	add_child(floor_body)
-	var fc := CollisionShape2D.new()
-	var fr := RectangleShape2D.new()
-	fr.size     = Vector2(half_w * 2, TILE_H * 5)
-	fc.shape    = fr
-	fc.position = Vector2(0.0, PLAY_BOTTOM + TILE_H * 2.5)
-	floor_body.add_child(fc)
+func _make_bounds_pair(name_prefix: String,
+		slab_centre_y: float, slab_h: float,
+		kz_centre_y: float) -> void:
+	var world_w := WORLD_HALF_WIDTH * 2
 
-	var floor_kz   := KillZone.instantiate()
-	var floor_kz_c := CollisionShape2D.new()
-	var floor_kz_r := RectangleShape2D.new()
-	floor_kz_r.size     = Vector2(half_w * 2, TILE_H * 2)
-	floor_kz_c.shape    = floor_kz_r
-	floor_kz_c.position = Vector2(0.0, PLAY_BOTTOM)   # extends 48px into play area
-	floor_kz.add_child(floor_kz_c)
-	add_child(floor_kz)
+	# Static collision slab — blocks the player at the boundary.
+	var body := StaticBody2D.new()
+	body.name = name_prefix + "Collision"
+	var col  := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size    = Vector2(world_w, slab_h)
+	col.shape    = rect
+	col.position = Vector2(0.0, slab_centre_y)
+	body.add_child(col)
+	add_child(body)
+
+	# Kill zone Area2D — straddles the boundary so the player's circle overlaps
+	# it on contact. Height of TILE_H * 2 (96px) is comfortably larger than the
+	# player radius (~25px) to guarantee overlap at the stop position.
+	var kz : Area2D = KillZoneScene.instantiate()
+	kz.name = name_prefix + "KillZone"
+	var kz_col  := CollisionShape2D.new()
+	var kz_rect := RectangleShape2D.new()
+	kz_rect.size    = Vector2(world_w, TILE_H * 2)
+	kz_col.shape    = kz_rect
+	kz_col.position = Vector2(0.0, kz_centre_y)
+	kz.add_child(kz_col)
+	add_child(kz)
 
 
 # ── Tile recycling ─────────────────────────────────────────────────────────────
 
 func _process(_delta: float) -> void:
-	var cam_right : float = $Player.position.x + 620.0   # half-viewport + 1 tile buffer
+	var cam_right := _player.position.x + CAM_LEAD
 	_scroll_ceil(cam_right)
 	_scroll_floor(cam_right)
 
@@ -177,22 +211,17 @@ func _scroll_ceil(cam_right: float) -> void:
 func _scroll_floor(cam_right: float) -> void:
 	while _floor_right < cam_right + TILE_W:
 		var new_x := _floor_right + TILE_W
-		_floor_top[_floor_head].position.x = new_x
-		for row in 3:
-			_floor_body[_floor_head * 3 + row].position.x = new_x
+		for spr in _floor_cols[_floor_head]:
+			spr.position.x = new_x
 		_floor_head  = (_floor_head + 1) % POOL_COLS
 		_floor_right = new_x
 
 
 # ── Lava animation ─────────────────────────────────────────────────────────────
 
-func _lava_region(frame: int) -> Rect2:
-	return Rect2(GAP + frame * (TILE_W + GAP), GAP, TILE_W, TILE_H)
-
 func _advance_lava() -> void:
 	_lava_frame = (_lava_frame + 1) % 4
-	var region := _lava_region(_lava_frame)
-	for spr in _floor_top:
-		spr.region_rect = region
-	for spr in _floor_body:
-		spr.region_rect = region
+	var region := _lava_regions[_lava_frame]
+	for col in _floor_cols:
+		for spr in col:
+			spr.region_rect = region

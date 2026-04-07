@@ -75,8 +75,7 @@ animations = [{
 [sub_resource type="CircleShape2D" id="CircleShape2D_fjrip"]
 radius = 24.738634
 
-[node name="Player" type="CharacterBody2D" unique_id=1466336390]
-position = Vector2(-1, 0)
+[node name="Player" type="CharacterBody2D" groups=["player"] unique_id=1466336390]
 script = ExtResource("2_player")
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1108010021]
