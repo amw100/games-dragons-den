@@ -111,28 +111,50 @@ func _build_floor() -> void:
 
 # ── Bounds collision — one wide slab each, never need to move ──────────────────
 
+const KillZone := preload("res://scenes/kill_zone.tscn")
+
 func _build_bounds_collision() -> void:
 	var half_w := 100_000.0
 
+	# Ceiling — static collision + kill zone
 	var ceil_body := StaticBody2D.new()
 	ceil_body.name = "CeilingCollision"
 	add_child(ceil_body)
 	var cc := CollisionShape2D.new()
 	var cr := RectangleShape2D.new()
-	cr.size      = Vector2(half_w * 2, TILE_H * 4)
-	cc.shape     = cr
-	cc.position  = Vector2(0.0, PLAY_TOP - TILE_H * 2.0)
+	cr.size     = Vector2(half_w * 2, TILE_H * 4)
+	cc.shape    = cr
+	cc.position = Vector2(0.0, PLAY_TOP - TILE_H * 2.0)
 	ceil_body.add_child(cc)
 
+	var ceil_kz   := KillZone.instantiate()
+	var ceil_kz_c := CollisionShape2D.new()
+	var ceil_kz_r := RectangleShape2D.new()
+	ceil_kz_r.size     = Vector2(half_w * 2, TILE_H * 2)
+	ceil_kz_c.shape    = ceil_kz_r
+	ceil_kz_c.position = Vector2(0.0, PLAY_TOP)   # extends 48px into play area
+	ceil_kz.add_child(ceil_kz_c)
+	add_child(ceil_kz)
+
+	# Floor — static collision + kill zone
 	var floor_body := StaticBody2D.new()
 	floor_body.name = "FloorCollision"
 	add_child(floor_body)
 	var fc := CollisionShape2D.new()
 	var fr := RectangleShape2D.new()
-	fr.size      = Vector2(half_w * 2, TILE_H * 5)
-	fc.shape     = fr
-	fc.position  = Vector2(0.0, PLAY_BOTTOM + TILE_H * 2.5)
+	fr.size     = Vector2(half_w * 2, TILE_H * 5)
+	fc.shape    = fr
+	fc.position = Vector2(0.0, PLAY_BOTTOM + TILE_H * 2.5)
 	floor_body.add_child(fc)
+
+	var floor_kz   := KillZone.instantiate()
+	var floor_kz_c := CollisionShape2D.new()
+	var floor_kz_r := RectangleShape2D.new()
+	floor_kz_r.size     = Vector2(half_w * 2, TILE_H * 2)
+	floor_kz_c.shape    = floor_kz_r
+	floor_kz_c.position = Vector2(0.0, PLAY_BOTTOM)   # extends 48px into play area
+	floor_kz.add_child(floor_kz_c)
+	add_child(floor_kz)
 
 
 # ── Tile recycling ─────────────────────────────────────────────────────────────

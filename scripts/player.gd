@@ -2,16 +2,26 @@ extends CharacterBody2D
 
 const SPEED      =  200.0
 const FLAP_FORCE = -450.0
+const DEATH_TIME_SEC = 2.0 
+
+var _dead        := false
+var _can_restart := false
 
 @onready var _sprite := $AnimatedSprite2D
 
 
 func _ready() -> void:
+	add_to_group("player")
 	_sprite.stop()
-	_sprite.frame = 2   # resting "level" frame
+	_sprite.frame = 2
 
 
 func _physics_process(delta: float) -> void:
+	if _dead:
+		velocity += get_gravity() * delta
+		move_and_slide()
+		return
+
 	velocity += get_gravity() * delta
 	velocity.x = SPEED
 
@@ -19,8 +29,22 @@ func _physics_process(delta: float) -> void:
 		velocity.y = FLAP_FORCE
 		_sprite.play("default")
 
-	# Return to resting frame once the one-shot animation finishes
 	if not _sprite.is_playing():
 		_sprite.frame = 2
 
 	move_and_slide()
+
+
+func _input(_event: InputEvent) -> void:
+	if _can_restart:
+		get_tree().reload_current_scene()
+
+
+func die() -> void:
+	if _dead:
+		return
+	_dead = true
+	velocity.x = 0.0
+	_sprite.play("death")
+	await get_tree().create_timer(DEATH_TIME_SEC).timeout
+	_can_restart = true
